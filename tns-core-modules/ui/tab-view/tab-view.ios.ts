@@ -125,11 +125,13 @@ export class TabViewItem extends TabViewItemBase {
     public _update() {
         if (this._parent && this._controller) {
             const icon = this._parent._getIcon(this.iconSource);
-            const tabBarItem = UITabBarItem.alloc().initWithTitleImageTag((this.title || ""), icon, this._parent.items.indexOf(this));
+            const tabBarItem = UITabBarItem.alloc().initWithTitleImageTag((this.title), icon, this._parent.items.indexOf(this));
             if (!icon) {
                 updateItemTitlePosition(tabBarItem);
             }
 
+            // TODO: Repeating code. Make TabViewItemBase - ViewBase and move the colorProperty on tabViewItem.
+            // Delete the repeating code.
             const states = getTitleAttributesForStates(this._parent);
             tabBarItem.setTitleTextAttributesForState(states.normalState, UIControlState.Normal);
             tabBarItem.setTitleTextAttributesForState(states.selectedState, UIControlState.Selected);
@@ -137,20 +139,6 @@ export class TabViewItem extends TabViewItemBase {
         }
     }
 }
-
-function selectedColorPropertyChanged(data: dependencyObservable.PropertyChangeData) {
-    const tabView = <TabView>data.object;
-    tabView._updateIOSTabBarColorsAndFonts();
-}
-(<proxy.PropertyMetadata>common.TabView.selectedColorProperty.metadata).onSetNativeValue = selectedColorPropertyChanged;
-
-function tabsBackgroundColorPropertyChanged(data: dependencyObservable.PropertyChangeData) {
-    const tabView = <TabView>data.object;
-    if (data.newValue instanceof color.Color) {
-        tabView.ios.tabBar.barTintColor = data.newValue.ios;
-    }
-}
-(<proxy.PropertyMetadata>common.TabView.tabsBackgroundColorProperty.metadata).onSetNativeValue = tabsBackgroundColorPropertyChanged;
 
 export class TabView extends TabViewBase {
     public _ios: UITabBarControllerImpl;
@@ -317,26 +305,6 @@ export class TabView extends TabViewBase {
         return image;
     }
 
-    public _onSelectedIndexPropertyChangedSetNativeValue(data: dependencyObservable.PropertyChangeData) {
-        super._onSelectedIndexPropertyChangedSetNativeValue(data);
-
-        var newIndex = data.newValue;
-        if (traceEnabled) {
-            traceWrite("TabView._onSelectedIndexPropertyChangedSetNativeValue(" + newIndex + ")", traceCategories.Debug);
-        }
-        if (types.isNullOrUndefined(newIndex)) {
-            return;
-        }
-
-        this._ios.selectedIndex = data.newValue;
-
-        // We will need to measure and arrange what became this._selectedView
-        this.requestLayout();
-
-        var args = { eventName: TabView.selectedIndexChangedEvent, object: this, oldIndex: data.oldValue, newIndex: data.newValue };
-        this.notify(args);
-    }
-
     public onMeasure(widthMeasureSpec: number, heightMeasureSpec: number): void {
         const nativeView = this._nativeView;
         if (nativeView) {
@@ -390,21 +358,73 @@ export class TabView extends TabViewBase {
             (heightMode === layout.UNSPECIFIED) ? Number.POSITIVE_INFINITY : height));
     }
 
-    public _updateIOSTabBarColorsAndFonts(): void {
-        if (!this.items) {
-            return;
-        }
-
-        const tabBar = this.ios.tabBar;
+    private _updateIOSTabBarColorsAndFonts(): void {
+        const tabBar = this._ios.tabBar;
 
         tabBar.tintColor = this.selectedColor ? this.selectedColor.ios : null;
         const states = getTitleAttributesForStates(this);
 
-        for (let i = 0; i < tabBar.items.count; i++) {
-            const item = <UITabBarItem>tabBar.items[i];
+        for (let i = 0, count = tabBar.items.count; i < count; i++) {
+            const item = tabBar.items[i];
             item.setTitleTextAttributesForState(states.normalState, UIControlState.Normal);
             item.setTitleTextAttributesForState(states.selectedState, UIControlState.Selected);
         }
+    }
+
+    private _onItemsPropertyChangedSetNativeValue() {
+        let oldValue = <TabViewItem[]>this.previousItems;
+        if (oldValue) {
+            this._removeTabs(oldValue);
+        }
+
+        let newValue = <TabViewItem[]>this.items;
+        if (newValue) {
+            this._addTabs(newValue);
+        }
+    }
+
+    get [selectedIndexProperty.native](): number {
+        return -1;
+    }
+    set [selectedIndexProperty.native](value: number) {
+        if (traceEnabled) {
+            traceWrite("TabView._onSelectedIndexPropertyChangedSetNativeValue(" + value + ")", traceCategories.Debug);
+        }
+
+        if (value > -1) {
+            this._ios.selectedIndex = value;
+        }
+
+        // We will need to measure and arrange what became this._selectedView
+        this.requestLayout();
+    }
+
+    get [itemsProperty.native](): TabViewItemBase[] {
+        return null;
+    }
+    set [itemsProperty.native](value: TabViewItemBase[]) {
+        this._onItemsPropertyChangedSetNativeValue();
+    }
+
+    get [colorProperty.native](): UIColor {
+        return null;
+    }
+    set [colorProperty.native](value: UIColor) {
+        this._updateIOSTabBarColorsAndFonts();
+    }
+
+    get [tabsBackgroundColorProperty.native](): UIColor {
+        return this._ios.tabBar.barTintColor;
+    }
+    set [tabsBackgroundColorProperty.native](value: UIColor | Color) {
+        this._ios.tabBar.barTintColor = value instanceof Color ? value.ios : value;
+    }
+
+    get [fontInternalProperty.native](): Font {
+        return null;
+    }
+    set [fontInternalProperty.native](value: Font) {
+        this._updateIOSTabBarColorsAndFonts();
     }
 }
 
@@ -423,7 +443,7 @@ function getTitleAttributesForStates(tabView: TabView): { normalState: any, sele
     }
 
     const defaultFont = UIFont.systemFontOfSize(10);
-    const font = (<any>tabView.style)._fontInternal.getUIFont(defaultFont);
+    const font = tabView.style.fontInternal.getUIFont(defaultFont);
     normalState[NSFontAttributeName] = font;
     selectedState[NSFontAttributeName] = font;
 
@@ -432,59 +452,3 @@ function getTitleAttributesForStates(tabView: TabView): { normalState: any, sele
         selectedState: selectedState
     };
 }
-
-export class TabViewStyler implements style.Styler {
-    // color
-    private static setColorProperty(v: view.View, newValue: any) {
-        var tab = <definition.TabView>v;
-        tab._updateIOSTabBarColorsAndFonts();
-    }
-
-    private static resetColorProperty(v: view.View, nativeValue: any) {
-        var tab = <definition.TabView>v;
-        tab._updateIOSTabBarColorsAndFonts();
-    }
-
-    // font
-    private static setFontInternalProperty(v: view.View, newValue: any, nativeValue?: any) {
-        var tab = <definition.TabView>v;
-        tab._updateIOSTabBarColorsAndFonts();
-    }
-
-    private static resetFontInternalProperty(v: view.View, nativeValue: any) {
-        var tab = <definition.TabView>v;
-        tab._updateIOSTabBarColorsAndFonts();
-    }
-
-    private static getNativeFontValue(v: view.View) {
-        var tab = <definition.TabView>v;
-
-        let currentFont;
-
-        if (tab.ios && tab.ios.items && tab.ios.items.length > 0) {
-            let currentAttrs = tab.ios.items[0].titleTextAttributesForState(UIControlState.Normal);
-            if (currentAttrs) {
-                currentFont = currentAttrs.objectForKey(NSFontAttributeName);
-            }
-        }
-
-        if (!currentFont) {
-            currentFont = UIFont.systemFontOfSize(getter(UIFont, UIFont.labelFontSize));
-        }
-
-        return currentFont;
-    }
-
-    public static registerHandlers() {
-        style.registerHandler(style.colorProperty, new style.StylePropertyChangedHandler(
-            TabViewStyler.setColorProperty,
-            TabViewStyler.resetColorProperty), "TabView");
-
-        style.registerHandler(style.fontInternalProperty, new style.StylePropertyChangedHandler(
-            TabViewStyler.setFontInternalProperty,
-            TabViewStyler.resetFontInternalProperty,
-            TabViewStyler.getNativeFontValue), "TabView");
-    }
-}
-
-TabViewStyler.registerHandlers();
