@@ -1,5 +1,4 @@
-﻿import { ButtonBase } from "./button-common";
-import { textProperty, formattedTextProperty } from "../text-base/text-base-common";
+﻿import { ButtonBase, textProperty, formattedTextProperty } from "./button-common";
 import { FormattedString } from "text/formatted-string";
 
 export * from "./button-common";
